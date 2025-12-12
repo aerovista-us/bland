@@ -810,6 +810,7 @@
           <button class="btn" id="btnLoop" title="Toggle loop">Loop: On</button>
           <button class="btn" id="btnWindowMode" title="Toggle video window mode">Window: Off</button>
           <button class="btn acid" id="btnBgToggle" title="Toggle video background">BG: On</button>
+          <button class="btn warn" id="btnSlowMode" title="Slow internet settings">Slow Mode</button>
         </div>
       </div>
     </header>
@@ -860,7 +861,33 @@
             <div class="notes" id="notes">
               <b>Drop your files in this folder:</b> <span class="hint">1.mp4, 2.mp4, etc.</span> + audio files. <br/>
               <b>Hotkeys:</b> <span class="kbd">Space</span> play/pause · <span class="kbd">←</span>/<span class="kbd">→</span> prev/next · <span class="kbd">J</span>/<span class="kbd">L</span> seek · <span class="kbd">M</span> mute. <br/><br/>
-              <span class="tag">TIP:</span> If your MP4 is too fast, this page forces <b>0.25x</b> playback by default.
+              <span class="tag">TIP:</span> Videos play at <b>0.85x</b> speed. Use <b>Slow Mode</b> button for low bandwidth options.
+            </div>
+            
+            <!-- Slow Internet Settings Panel (hidden by default) -->
+            <div id="slowModePanel" style="display:none; margin-top:12px; padding:12px; border-radius:12px; background:rgba(0,0,0,.25); border:1px solid rgba(255,204,0,.3);">
+              <h4 style="margin:0 0 10px 0; font-size:12px; color:#ffcc00; letter-spacing:.1em;">SLOW INTERNET OPTIONS</h4>
+              <div style="display:flex; flex-direction:column; gap:10px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:11px; cursor:pointer;">
+                  <input type="checkbox" id="optDisableVideo" />
+                  <span>Disable video background (audio only)</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:11px; cursor:pointer;">
+                  <input type="checkbox" id="optLazyLoad" checked />
+                  <span>Lazy load videos (load on demand)</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:11px; cursor:pointer;">
+                  <input type="checkbox" id="optLowQuality" />
+                  <span>Reduce video quality (if available)</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:11px; cursor:pointer;">
+                  <input type="checkbox" id="optPreloadAudio" />
+                  <span>Preload next audio track</span>
+                </label>
+                <div style="font-size:10px; color:rgba(233,238,248,.6); margin-top:4px;">
+                  <span id="bandwidthStatus">Detecting connection speed...</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -970,12 +997,63 @@
     const VIDEO_COUNT = 21;
     let currentVideoIndex = 1;
 
-    function loadNextVideo(){
-      // Load current video
-      bgVideo.src = `${currentVideoIndex}.mp4`;
+    function loadNextVideo(forceLoad = false){
+      if (!bgVideo) return;
+      
+      // Check if video should be disabled
+      if (state.slowMode.disableVideo) {
+        bgVideo.style.display = 'none';
+        return;
+      }
+      
+      // Lazy loading: only load if not in lazy mode or if forced
+      if (state.slowMode.lazyLoad && !forceLoad && !state.bg && !state.windowMode) {
+        // Don't load video yet, wait for user to enable it
+        return;
+      }
+      
+      // Set up error handler before loading
+      bgVideo.onerror = () => {
+        console.warn(`Video ${currentVideoIndex}.mp4 failed to load, skipping to next`);
+        // Skip to next video on error
+        currentVideoIndex = (currentVideoIndex % VIDEO_COUNT) + 1;
+        // Prevent infinite loop if all videos fail
+        const attempts = bgVideo.dataset.errorCount = (parseInt(bgVideo.dataset.errorCount || '0') + 1);
+        if (attempts < VIDEO_COUNT) {
+          setTimeout(() => loadNextVideo(true), 100);
+        } else {
+          console.error("Multiple video load failures. Stopping video cycling.");
+          if (statusText) setStatus("error", "Video files not found. Check file paths.");
+        }
+      };
+      
+      // Reset error count on successful load
+      bgVideo.onloadeddata = () => {
+        bgVideo.dataset.errorCount = '0';
+      };
+      
+      // Load current video with quality settings
+      let videoSrc = `${currentVideoIndex}.mp4`;
+      if (state.slowMode.lowQuality) {
+        // Try lower quality version if available (e.g., 1_low.mp4)
+        videoSrc = `${currentVideoIndex}_low.mp4`;
+        bgVideo.onerror = () => {
+          // Fallback to normal quality if low quality doesn't exist
+          bgVideo.src = `${currentVideoIndex}.mp4`;
+          bgVideo.load();
+        };
+      }
+      
+      bgVideo.src = videoSrc;
       bgVideo.load();
       bgVideo.playbackRate = 0.85;
-      bgVideo.play().catch(()=>{});
+      
+      // Set preload based on settings
+      bgVideo.preload = state.slowMode.lazyLoad ? 'none' : 'auto';
+      
+      bgVideo.play().catch((err) => {
+        console.warn("Video play failed:", err);
+      });
       updateVideoDisplay();
       
       // Prepare next video index (1-21, cycles back to 1)
@@ -983,9 +1061,22 @@
     }
 
     // ====== State / Elements ======
-    const $ = (id) => document.getElementById(id);
+    const $ = (id) => {
+      const el = document.getElementById(id);
+      if (!el) {
+        console.warn(`Element #${id} not found`);
+      }
+      return el;
+    };
+    
     const audio = $("audio");
     const bgVideo = $("bgVideo");
+    
+    // Early exit if critical elements missing
+    if (!audio || !bgVideo) {
+      console.error("Critical elements missing. Cannot initialize player.");
+      document.body.innerHTML = '<div style="padding:20px;color:#ff3b3b;font-family:monospace;">Error: Required elements not found. Please refresh the page.</div>';
+    }
 
     const listEl = $("list");
     const titleEl = $("trackTitle");
@@ -1018,6 +1109,15 @@
     const btnCopy = $("btnCopy");
     const btnClearMem = $("btnClearMem");
     const btnAddDemo = $("btnAddDemo");
+    const btnSlowMode = $("btnSlowMode");
+    
+    // Slow internet options elements
+    const slowModePanel = $("slowModePanel");
+    const optDisableVideo = $("optDisableVideo");
+    const optLazyLoad = $("optLazyLoad");
+    const optLowQuality = $("optLowQuality");
+    const optPreloadAudio = $("optPreloadAudio");
+    const bandwidthStatus = $("bandwidthStatus");
 
     const KEY = "swamphop_borderlands_player_v1";
     const state = {
@@ -1028,6 +1128,13 @@
       shuffled: false,
       order: [...TRACKS.keys()],
       volume: 0.85,
+      slowMode: {
+        disableVideo: false,
+        lazyLoad: true,
+        lowQuality: false,
+        preloadAudio: false,
+        bandwidth: 'unknown'
+      }
     };
 
     // ====== Helpers ======
@@ -1040,6 +1147,7 @@
 
     function setStatus(kind, text){
       // kind: "ready" | "play" | "pause" | "error"
+      if (!statusDot || !statusText) return;
       const map = {
         ready: { dot:"●", color:"rgba(182,255,59,.95)" },
         play:  { dot:"●", color:"rgba(57,214,255,.95)" },
@@ -1051,36 +1159,86 @@
       statusText.textContent = text || "—";
     }
 
+    // Debounced save to prevent excessive writes
+    let saveTimeout = null;
     function save(){
-      const payload = {
-        ...state,
-        currentTime: audio.currentTime || 0,
-        idx: state.idx,
-        order: state.order,
-        loop: state.loop,
-        bg: state.bg,
-        windowMode: state.windowMode,
-        shuffled: state.shuffled,
-        volume: state.volume
-      };
-      localStorage.setItem(KEY, JSON.stringify(payload));
+      clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(() => {
+        try {
+          if (typeof localStorage === 'undefined') return;
+          
+          const payload = {
+            ...state,
+            currentTime: audio ? (audio.currentTime || 0) : 0,
+            idx: state.idx,
+            order: state.order,
+            loop: state.loop,
+            bg: state.bg,
+            windowMode: state.windowMode,
+            shuffled: state.shuffled,
+            volume: state.volume,
+            slowMode: state.slowMode
+          };
+          localStorage.setItem(KEY, JSON.stringify(payload));
+        } catch(e) {
+          console.error("Failed to save state:", e);
+        }
+      }, 300); // Debounce to 300ms
     }
 
     function load(){
       try{
+        // Check localStorage availability
+        if (typeof localStorage === 'undefined') {
+          console.warn("localStorage not available");
+          return;
+        }
+        
         const raw = localStorage.getItem(KEY);
         if(!raw) return;
+        
         const d = JSON.parse(raw);
-        if(typeof d.idx === "number") state.idx = clampIdx(d.idx);
-        if(Array.isArray(d.order) && d.order.length === TRACKS.length) state.order = d.order;
+        
+        // Validate state structure
+        if (!d || typeof d !== 'object') {
+          console.warn("Invalid state structure, using defaults");
+          return;
+        }
+        
+        // Validate and restore each property
+        if(typeof d.idx === "number" && d.idx >= 0 && d.idx < TRACKS.length) {
+          state.idx = d.idx;
+        }
+        
+        if(Array.isArray(d.order) && d.order.length === TRACKS.length) {
+          // Validate order array contains valid indices
+          const validOrder = d.order.every(idx => typeof idx === 'number' && idx >= 0 && idx < TRACKS.length);
+          if (validOrder) {
+            state.order = d.order;
+          }
+        }
+        
         if(typeof d.loop === "boolean") state.loop = d.loop;
         if(typeof d.bg === "boolean") state.bg = d.bg;
         if(typeof d.windowMode === "boolean") state.windowMode = d.windowMode;
         if(typeof d.shuffled === "boolean") state.shuffled = d.shuffled;
-        if(typeof d.volume === "number") state.volume = Math.min(1, Math.max(0, d.volume));
+        if(typeof d.volume === "number" && d.volume >= 0 && d.volume <= 1) {
+          state.volume = d.volume;
+        }
+        
         // restore currentTime after metadata loads
-        state._restoreTime = (typeof d.currentTime === "number") ? d.currentTime : 0;
-      }catch(e){}
+        if(typeof d.currentTime === "number" && d.currentTime >= 0) {
+          state._restoreTime = d.currentTime;
+        }
+      }catch(e){
+        console.error("Failed to load state:", e);
+        // Reset to defaults on error
+        try {
+          localStorage.removeItem(KEY);
+        } catch(clearErr) {
+          console.error("Failed to clear corrupted state:", clearErr);
+        }
+      }
     }
 
     function clampIdx(i){
@@ -1094,10 +1252,21 @@
     }
 
     function renderList(){
+      if (!listEl) return;
+      if (!TRACKS || TRACKS.length === 0) {
+        listEl.innerHTML = "<li style='padding:20px;text-align:center;color:rgba(233,238,248,.65);'>No tracks available</li>";
+        if (modeText) modeText.textContent = "No Tracks";
+        return;
+      }
+      
       listEl.innerHTML = "";
       for(let i=0;i<TRACKS.length;i++){
         const real = state.order[i];
+        if (real === undefined || real < 0 || real >= TRACKS.length) continue;
+        
         const tr = TRACKS[real];
+        if (!tr || !tr.title) continue;
+        
         const li = document.createElement("li");
         li.className = "track" + (i === state.idx ? " active" : "");
         li.dataset.idx = String(i);
@@ -1105,10 +1274,10 @@
         const left = document.createElement("div");
         const name = document.createElement("div");
         name.className = "name";
-        name.textContent = tr.title;
+        name.textContent = tr.title || "Unknown";
         const desc = document.createElement("div");
         desc.className = "desc";
-        desc.textContent = `${tr.artist} · ${tr.mood}`;
+        desc.textContent = `${tr.artist || "Unknown"} · ${tr.mood || "—"}`;
         left.appendChild(name);
         left.appendChild(desc);
 
@@ -1130,18 +1299,40 @@
     }
 
     function updateActiveRow(){
+      if (!listEl) return;
       [...listEl.querySelectorAll(".track")].forEach((el) => {
         el.classList.toggle("active", Number(el.dataset.idx) === state.idx);
       });
     }
 
     function loadTrack(autoplay=false){
-      const tr = TRACKS[currentRealIndex()];
-      titleEl.textContent = tr.title;
+      if (!TRACKS || TRACKS.length === 0) {
+        setStatus("error", "No tracks available");
+        return;
+      }
+      
+      if (!audio) {
+        setStatus("error", "Audio element not found");
+        return;
+      }
+      
+      const realIdx = currentRealIndex();
+      if (realIdx < 0 || realIdx >= TRACKS.length) {
+        setStatus("error", "Invalid track index");
+        return;
+      }
+      
+      const tr = TRACKS[realIdx];
+      if (!tr || !tr.src) {
+        setStatus("error", "Track data invalid");
+        return;
+      }
+      
+      if (titleEl) titleEl.textContent = tr.title || "Unknown";
 
-      metaEl.innerHTML = "";
+      if (metaEl) metaEl.innerHTML = "";
       const chips = [
-        `Artist: ${tr.artist}`,
+        `Artist: ${tr.artist || "Unknown"}`,
         tr.mood || "—",
         state.shuffled ? "Shuffle: On" : "Shuffle: Off"
       ];
@@ -1159,11 +1350,16 @@
         <span class="tag">BG:</span> MP4 video running at <b>0.85x</b> (toggle in header). Window mode available.
       `;
 
-      audio.src = tr.src;
+      // Handle filenames with special characters
+      audio.src = encodeURI(tr.src);
+      audio.preload = state.slowMode.preloadAudio ? 'auto' : 'metadata';
       audio.load();
       updateActiveRow();
       setStatus("ready", "Loaded: " + tr.title);
-      btnPlay.textContent = "Play";
+      if (btnPlay) btnPlay.textContent = "Play";
+      
+      // Preload next track if enabled
+      preloadNextAudio();
 
       // Restore time once metadata is ready
       const restore = state._restoreTime || 0;
@@ -1177,8 +1373,9 @@
         save();
       };
 
-      audio.onerror = () => {
-        setStatus("error", "Audio failed to load. Check file path.");
+      audio.onerror = (e) => {
+        setStatus("error", `Audio failed to load: ${tr.src}. Check file path.`);
+        console.error("Audio load error:", e, "File:", tr.src);
       };
     }
 
@@ -1376,6 +1573,12 @@
         $("bgVideo").style.display = state.bg ? "block" : "none";
       }
       btnBgToggle.textContent = "BG: " + (state.bg ? "On" : "Off");
+      
+      // Load video if enabling and not in lazy mode
+      if (state.bg && !state.slowMode.lazyLoad && !state.slowMode.disableVideo) {
+        loadNextVideo(true);
+      }
+      
       save();
     });
 
@@ -1399,27 +1602,144 @@
       setStatus("ready","Edit TRACKS[] in the HTML to add your real files.");
     });
 
+    // ====== Bandwidth Detection ======
+    function detectBandwidth() {
+      if (!navigator.connection && !navigator.mozConnection && !navigator.webkitConnection) {
+        if (bandwidthStatus) bandwidthStatus.textContent = "Connection API not available";
+        state.slowMode.bandwidth = 'unknown';
+        return;
+      }
+      
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      const effectiveType = connection.effectiveType || 'unknown';
+      const downlink = connection.downlink || 0;
+      
+      state.slowMode.bandwidth = effectiveType;
+      
+      let statusText = `Connection: ${effectiveType}`;
+      if (downlink > 0) {
+        statusText += ` (${downlink.toFixed(1)} Mbps)`;
+      }
+      
+      // Auto-enable slow mode options for slow connections
+      if (effectiveType === 'slow-2g' || effectiveType === '2g' || (downlink > 0 && downlink < 1.5)) {
+        if (optLazyLoad) optLazyLoad.checked = true;
+        state.slowMode.lazyLoad = true;
+        if (bandwidthStatus) bandwidthStatus.textContent = statusText + " - Slow connection detected";
+        setStatus("ready", "Slow connection detected. Lazy loading enabled.");
+      } else {
+        if (bandwidthStatus) bandwidthStatus.textContent = statusText;
+      }
+      
+      // Listen for connection changes
+      connection.addEventListener('change', detectBandwidth);
+    }
+
+    // ====== Slow Mode Toggle ======
+    if (btnSlowMode) {
+      btnSlowMode.addEventListener("click", ()=>{
+        if (!slowModePanel) return;
+        const isVisible = slowModePanel.style.display !== 'none';
+        slowModePanel.style.display = isVisible ? 'none' : 'block';
+        btnSlowMode.textContent = isVisible ? 'Slow Mode' : 'Hide Options';
+      });
+    }
+
+    // ====== Slow Mode Options ======
+    if (optDisableVideo) {
+      optDisableVideo.addEventListener("change", (e)=>{
+        state.slowMode.disableVideo = e.target.checked;
+        if (state.slowMode.disableVideo) {
+          if (bgVideo) bgVideo.style.display = 'none';
+          setStatus("ready", "Video disabled for bandwidth savings");
+        } else {
+          updateVideoDisplay();
+          loadNextVideo(true);
+        }
+        save();
+      });
+    }
+
+    if (optLazyLoad) {
+      optLazyLoad.addEventListener("change", (e)=>{
+        state.slowMode.lazyLoad = e.target.checked;
+        if (bgVideo) {
+          bgVideo.preload = state.slowMode.lazyLoad ? 'none' : 'auto';
+        }
+        if (!state.slowMode.lazyLoad && state.bg) {
+          loadNextVideo(true);
+        }
+        save();
+      });
+    }
+
+    if (optLowQuality) {
+      optLowQuality.addEventListener("change", (e)=>{
+        state.slowMode.lowQuality = e.target.checked;
+        if (state.bg || state.windowMode) {
+          loadNextVideo(true);
+        }
+        save();
+      });
+    }
+
+    if (optPreloadAudio) {
+      optPreloadAudio.addEventListener("change", (e)=>{
+        state.slowMode.preloadAudio = e.target.checked;
+        if (audio) {
+          audio.preload = state.slowMode.preloadAudio ? 'auto' : 'metadata';
+        }
+        save();
+      });
+    }
+
+    // Preload next audio track if enabled
+    let nextAudioPreload = null;
+    function preloadNextAudio() {
+      if (!state.slowMode.preloadAudio || !audio) return;
+      
+      const nextIdx = state.idx < TRACKS.length - 1 ? state.idx + 1 : (state.loop ? 0 : -1);
+      if (nextIdx < 0 || nextIdx >= TRACKS.length) return;
+      
+      const nextTrack = TRACKS[state.order[nextIdx]];
+      if (!nextTrack || !nextTrack.src) return;
+      
+      // Create hidden audio element for preloading
+      if (nextAudioPreload) {
+        nextAudioPreload.src = '';
+        nextAudioPreload.load();
+      }
+      
+      nextAudioPreload = document.createElement('audio');
+      nextAudioPreload.preload = 'auto';
+      nextAudioPreload.src = encodeURI(nextTrack.src);
+      nextAudioPreload.load();
+    }
+
     // Audio time updates
-    audio.addEventListener("timeupdate", ()=>{
-      const cur = audio.currentTime || 0;
-      const dur = audio.duration || 0;
-      tCur.textContent = fmtTime(cur);
-      if(isFinite(dur) && dur>0){
-        fill.style.width = (cur/dur*100).toFixed(3) + "%";
-      }
-      if(Math.floor(cur) % 2 === 0) save(); // light save
+    if (audio) {
+      audio.addEventListener("timeupdate", ()=>{
+        if (!audio || !tCur || !fill) return;
+        const cur = audio.currentTime || 0;
+        const dur = audio.duration || 0;
+        if (tCur) tCur.textContent = fmtTime(cur);
+        if(isFinite(dur) && dur>0 && fill){
+          fill.style.width = (cur/dur*100).toFixed(3) + "%";
+        }
+        if(Math.floor(cur) % 2 === 0) save(); // light save
 
-      // Fake combat + loot reactions
-      const shield = document.getElementById("shieldBar");
-      const health = document.getElementById("healthBar");
+        // Fake combat + loot reactions
+        const shield = document.getElementById("shieldBar");
+        const health = document.getElementById("healthBar");
 
-      if (Math.random() > 0.985) {
-        shield.style.width = (60 + Math.random()*40) + "%";
-      }
-      if (Math.random() > 0.995) {
-        health.style.width = (50 + Math.random()*30) + "%";
-      }
-    });
+        if (shield && Math.random() > 0.985) {
+          shield.style.width = (60 + Math.random()*40) + "%";
+        }
+        if (health && Math.random() > 0.995) {
+          health.style.width = (50 + Math.random()*30) + "%";
+        }
+      });
+    }
 
     audio.addEventListener("ended", ()=>{
       if(state.loop || state.idx < TRACKS.length - 1){
@@ -1452,10 +1772,21 @@
 
     // ====== Boot ======
     (function init(){
-      // Initialize first video
-      loadNextVideo();
-
+      // Detect bandwidth first
+      detectBandwidth();
+      
       load();
+
+      // Initialize slow mode UI
+      if (optDisableVideo) optDisableVideo.checked = state.slowMode.disableVideo;
+      if (optLazyLoad) optLazyLoad.checked = state.slowMode.lazyLoad;
+      if (optLowQuality) optLowQuality.checked = state.slowMode.lowQuality;
+      if (optPreloadAudio) optPreloadAudio.checked = state.slowMode.preloadAudio;
+      
+      // Set audio preload based on settings
+      if (audio) {
+        audio.preload = state.slowMode.preloadAudio ? 'auto' : 'metadata';
+      }
 
       // apply state UI
       audio.volume = state.volume;
@@ -1465,6 +1796,13 @@
       updateVideoDisplay();
       btnWindowMode.textContent = "Window: " + (state.windowMode ? "On" : "Off");
       btnBgToggle.textContent = "BG: " + (state.bg ? "On" : "Off");
+      
+      // Initialize first video (only if not lazy loading or video is enabled)
+      if (!state.slowMode.lazyLoad || state.bg || state.windowMode) {
+        if (!state.slowMode.disableVideo) {
+          loadNextVideo();
+        }
+      }
 
       // if previously shuffled, keep order (render accordingly)
       renderList();
