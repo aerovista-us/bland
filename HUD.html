@@ -27,10 +27,7 @@
     body{
       margin:0;
       font-family:var(--sans);
-      background: radial-gradient(1200px 900px at 20% 0%, rgba(57,214,255,.18), transparent 55%),
-                  radial-gradient(900px 700px at 80% 10%, rgba(255,59,182,.14), transparent 60%),
-                  radial-gradient(1000px 800px at 50% 100%, rgba(182,255,59,.10), transparent 60%),
-                  var(--bg);
+      background: transparent;
       color:#e9eef8;
       overflow:hidden;
       -webkit-tap-highlight-color:transparent;
@@ -42,7 +39,7 @@
     /* === Video filmstrip background === */
     .bg-wrap{
       position:fixed; inset:0;
-      z-index:-3;
+      z-index:0;
       background:#000;
     }
     video#bgVideo{
@@ -51,6 +48,7 @@
       object-fit:cover;
       filter: contrast(1.05) saturate(1.12) brightness(.62);
       transform: scale(1.02);
+      z-index:0;
     }
     video#bgVideo.window-mode{
       position:fixed;
@@ -764,12 +762,133 @@
       45%{opacity:1}
       48%{opacity:.3}
     }
+
+    /* === HUD Overlay Shell === */
+    .hud-shell{
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: 420px;
+      max-width: calc(100vw - 24px);
+      height: 560px;
+      max-height: calc(100vh - 24px);
+      z-index: 999999;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 22px 80px rgba(0,0,0,.65);
+      border: 1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(10,12,18,.72), rgba(10,12,18,.38));
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+      resize: both;
+    }
+
+    /* top bar */
+    .hud-top{
+      height: 44px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding: 0 10px 0 12px;
+      cursor: grab;
+      user-select:none;
+      background: rgba(0,0,0,.28);
+      border-bottom: 1px solid rgba(255,255,255,.10);
+    }
+    .hud-top:active{ cursor: grabbing; }
+
+    .hud-title{
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: rgba(233,238,248,.82);
+    }
+
+    .hud-actions{ display:flex; gap:8px; }
+
+    .hud-btn{
+      width: 34px;
+      height: 28px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.22);
+      color: rgba(233,238,248,.85);
+      cursor:pointer;
+      font-family: var(--mono);
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .15s ease;
+    }
+    .hud-btn:hover{ background: rgba(0,0,0,.34); }
+    .hud-btn:active{ transform: scale(.95); }
+
+    /* body */
+    .hud-body{
+      height: calc(100% - 44px);
+      padding: 10px;
+      overflow: auto;
+    }
+
+    /* Make your existing layout compact inside HUD */
+    .hud-body header{ display:none; } /* hides the big header bar inside overlay */
+    .hud-body main{ grid-template-columns: 1fr; } /* stack panels */
+    .hud-body .panel{ border-radius: 16px; }
+    .hud-body footer{ display:none; }
+
+    /* minimized state */
+    .hud-shell.min{
+      height: 44px !important;
+      width: 320px;
+      resize: none;
+    }
+    .hud-shell.min .hud-body{ display:none; }
+
+    /* click-through mode (only top bar clickable) */
+    .hud-shell.passive{
+      pointer-events: none;
+    }
+    .hud-shell.passive .hud-top{
+      pointer-events: auto;
+    }
+
+    /* Mobile HUD adjustments */
+    @media (max-width: 768px){
+      .hud-shell{
+        width: calc(100vw - 24px);
+        height: calc(100vh - 24px);
+        max-width: none;
+        max-height: none;
+        right: 12px;
+        bottom: 12px;
+      }
+      .hud-shell.min{
+        width: calc(100vw - 24px);
+      }
+    }
+
+    @media (max-width: 480px){
+      .hud-shell{
+        right: 8px;
+        bottom: 8px;
+        width: calc(100vw - 16px);
+        height: calc(100vh - 16px);
+      }
+      .hud-shell.min{
+        width: calc(100vw - 16px);
+      }
+      .hud-body{
+        padding: 8px;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="bg-wrap">
     <!-- Video background - swaps per track (1.mp4, 2.mp4, etc.) -->
-    <video id="bgVideo" autoplay muted playsinline preload="auto" webkit-playsinline crossorigin="anonymous" disablePictureInPicture controlsList="nodownload">
+    <video id="bgVideo" autoplay muted playsinline preload="auto" webkit-playsinline disablePictureInPicture controlsList="nodownload">
       <source src="1.mp4" type="video/mp4" />
     </video>
     <div class="hud">
@@ -792,7 +911,15 @@
     <div class="vignette"></div>
   </div>
 
-  <div class="app">
+  <div class="hud-shell" id="hudShell">
+    <div class="hud-top" id="hudTop">
+      <div class="hud-title">ECHO HUD</div>
+      <div class="hud-actions">
+        <button class="hud-btn" id="hudMin">–</button>
+        <button class="hud-btn" id="hudPin" title="Toggle click-through">◎</button>
+      </div>
+    </div>
+    <div class="app hud-body" id="hudBody">
     <header>
       <div class="brand">
         <div class="logo" aria-hidden="true"></div>
@@ -806,7 +933,6 @@
         <div class="pill"><b id="statusDot">●</b> <small id="statusText">Ready</small></div>
         <div class="pill"><b>MODE</b> <small id="modeText">Loop</small></div>
         <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-          <a href="HUD.html" class="btn" style="text-decoration:none; display:inline-flex; align-items:center;" title="Open in floating HUD window">🪟 Windowed</a>
           <button class="btn warn" id="btnShuffle" title="Shuffle">Shuffle</button>
           <button class="btn" id="btnLoop" title="Toggle loop">Loop: On</button>
           <button class="btn" id="btnWindowMode" title="Toggle video window mode">Window: Off</button>
@@ -923,7 +1049,8 @@
 
     <!-- Audio element -->
     <audio id="audio" preload="metadata"></audio>
-  </div>
+    </div> <!-- /app -->
+  </div> <!-- /hud-shell -->
 
   <script>
     // ====== CONFIG: Edit these tracks ======
@@ -1823,6 +1950,96 @@
         }
       }
     });
+
+    // ====== HUD drag + minimize + "click-through" toggle =====
+    const hudShell = $("hudShell");
+    const hudTop = $("hudTop");
+    const hudMin = $("hudMin");
+    const hudPin = $("hudPin");
+
+    if (hudShell && hudTop && hudMin && hudPin) {
+      let dragging = false;
+      let startX = 0, startY = 0;
+      let startLeft = 0, startTop = 0;
+
+      function px(n){ return `${n}px`; }
+
+      // Drag functionality (mouse)
+      hudTop.addEventListener("mousedown", (e)=>{
+        // ignore clicks on buttons
+        if (e.target.closest(".hud-actions")) return;
+        dragging = true;
+        const r = hudShell.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = r.left;
+        startTop = r.top;
+        // switch from bottom/right anchoring to top/left anchoring during drag
+        hudShell.style.right = "auto";
+        hudShell.style.bottom = "auto";
+        hudShell.style.left = px(startLeft);
+        hudShell.style.top = px(startTop);
+      });
+
+      window.addEventListener("mousemove", (e)=>{
+        if(!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const maxLeft = window.innerWidth - hudShell.offsetWidth - 6;
+        const maxTop  = window.innerHeight - hudShell.offsetHeight - 6;
+        const nextLeft = Math.max(6, Math.min(maxLeft, startLeft + dx));
+        const nextTop  = Math.max(6, Math.min(maxTop, startTop + dy));
+        hudShell.style.left = px(nextLeft);
+        hudShell.style.top = px(nextTop);
+      });
+
+      window.addEventListener("mouseup", ()=> dragging = false);
+
+      // Drag functionality (touch)
+      hudTop.addEventListener("touchstart", (e)=>{
+        if (e.target.closest(".hud-actions")) return;
+        dragging = true;
+        const touch = e.touches[0];
+        const r = hudShell.getBoundingClientRect();
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startLeft = r.left;
+        startTop = r.top;
+        hudShell.style.right = "auto";
+        hudShell.style.bottom = "auto";
+        hudShell.style.left = px(startLeft);
+        hudShell.style.top = px(startTop);
+        e.preventDefault();
+      }, {passive: false});
+
+      window.addEventListener("touchmove", (e)=>{
+        if(!dragging) return;
+        const touch = e.touches[0];
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        const maxLeft = window.innerWidth - hudShell.offsetWidth - 6;
+        const maxTop  = window.innerHeight - hudShell.offsetHeight - 6;
+        const nextLeft = Math.max(6, Math.min(maxLeft, startLeft + dx));
+        const nextTop  = Math.max(6, Math.min(maxTop, startTop + dy));
+        hudShell.style.left = px(nextLeft);
+        hudShell.style.top = px(nextTop);
+        e.preventDefault();
+      }, {passive: false});
+
+      window.addEventListener("touchend", ()=> dragging = false);
+
+      // Minimize toggle
+      hudMin.addEventListener("click", ()=>{
+        hudShell.classList.toggle("min");
+      });
+
+      // Click-through toggle
+      hudPin.addEventListener("click", ()=>{
+        hudShell.classList.toggle("passive");
+        // little visual hint
+        hudPin.textContent = hudShell.classList.contains("passive") ? "◌" : "◎";
+      });
+    }
 
     // ====== Boot ======
     (function init(){
